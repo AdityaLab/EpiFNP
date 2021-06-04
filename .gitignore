@@ -1,0 +1,7 @@
+*.pyc
+*.pdf
+*.png
+*.pkl
+*.pth
+envs/*
+.vscode/*

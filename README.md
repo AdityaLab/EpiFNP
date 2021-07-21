@@ -1,6 +1,6 @@
 # When in Doubt: Neural Non-Parametric Uncertainty Quantification for Epidemic Forecasting
 
-
+**Paper Link:** https://arxiv.org/abs/2106.03904
 
 ## Setup
 

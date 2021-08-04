@@ -1,0 +1,3 @@
+[submodule "DistCal"]
+	path = DistCal
+	url = https://github.com/Srceh/DistCal.git

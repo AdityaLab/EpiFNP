@@ -1,0 +1,19 @@
+channels:
+  - defaults
+dependencies:
+  - python>=3.6
+  - tensorflow>=2.0
+  - numpy
+  - scipy
+  - scikit-learn
+  - pandas
+  - matplotlib
+  - pip
+  - tqdm
+  - joblib
+# For development
+  - ipykernel
+  - jupyter
+  - black
+  - pylint
+  - flake8

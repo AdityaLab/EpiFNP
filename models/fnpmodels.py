@@ -102,22 +102,24 @@ class TanhAttn(nn.Module):
         weights = weights / (weights.sum(-1, keepdim=True))
         return (weights @ keys).transpose(1, 0)
 
+
 class LatentAtten(nn.Module):
     """
     Attention on latent representation
     """
+
     def __init__(self, h_dim, key_dim=None) -> None:
         super(LatentAtten, self).__init__()
         if key_dim is None:
-            key_dim  = h_dim
+            key_dim = h_dim
         self.key_dim = key_dim
         self.key_layer = nn.Linear(h_dim, key_dim)
         self.query_layer = nn.Linear(h_dim, key_dim)
-    
+
     def forward(self, h_M, h_R):
         key = self.key_layer(h_M)
         query = self.query_layer(h_R)
-        atten = (key @ query.transpose(0,1))/math.sqrt(self.key_dim)
+        atten = (key @ query.transpose(0, 1)) / math.sqrt(self.key_dim)
         atten = torch.softmax(atten, 1)
         return atten
 
@@ -136,7 +138,7 @@ class EmbedAttenSeq(nn.Module):
         n_layers: int = 1,
         bidirectional: bool = False,
         attn=TransformerAttn,
-        dropout=0.0
+        dropout=0.0,
     ) -> None:
         """
         param dim_seq_in: Dimensionality of input vector (no. of age groups)
@@ -157,7 +159,7 @@ class EmbedAttenSeq(nn.Module):
             hidden_size=self.rnn_out // 2 if self.bidirectional else self.rnn_out,
             bidirectional=bidirectional,
             num_layers=n_layers,
-            dropout = dropout
+            dropout=dropout,
         )
         self.attn_layer = attn(self.rnn_out, self.rnn_out, self.rnn_out)
         self.out_layer = [
@@ -184,6 +186,8 @@ class EmbedAttenSeq(nn.Module):
         latent_seqs = self.attn_layer(latent_seqs).sum(0)
         out = self.out_layer(torch.cat([latent_seqs, metadata], dim=1))
         return out
+
+
 class EmbedAttenSeq2(nn.Module):
     """
     Module to embed a sequence. Adds Attention module to
@@ -199,7 +203,7 @@ class EmbedAttenSeq2(nn.Module):
         n_layers: int = 1,
         bidirectional: bool = False,
         attn=TransformerAttn,
-        dropout=0.0
+        dropout=0.0,
     ) -> None:
         """
         param dim_seq_in: Dimensionality of input vector (no. of age groups)
@@ -221,12 +225,13 @@ class EmbedAttenSeq2(nn.Module):
             hidden_size=self.rnn_out // 2 if self.bidirectional else self.rnn_out,
             bidirectional=bidirectional,
             num_layers=n_layers,
-            dropout = dropout
+            dropout=dropout,
         )
         self.attn_layer = attn(self.rnn_out, self.rnn_out, self.rnn_out)
         self.out_layer = [
             nn.Linear(
-                in_features=self.rnn_out + self.dim_metadata + self.dim_label_in, out_features=self.dim_out
+                in_features=self.rnn_out + self.dim_metadata + self.dim_label_in,
+                out_features=self.dim_out,
             ),
             nn.Tanh(),
             nn.Dropout(dropout),
@@ -348,7 +353,8 @@ class EmbedSeq2(nn.Module):
         )
         self.out_layer = [
             nn.Linear(
-                in_features=self.rnn_out + self.dim_metadata + self.dim_label_in, out_features=self.dim_out
+                in_features=self.rnn_out + self.dim_metadata + self.dim_label_in,
+                out_features=self.dim_out,
             ),
             nn.Tanh(),
         ]
@@ -369,6 +375,7 @@ class EmbedSeq2(nn.Module):
 
         out = self.out_layer(torch.cat([latent_seqs, metadata, labels], dim=1))
         return out
+
 
 class RegressionFNP(nn.Module):
     """
@@ -480,9 +487,9 @@ class RegressionFNP(nn.Module):
             u[XR.size(0) :], u[0 : XR.size(0)], self.pairwise_g, training=self.training
         )
         if self.add_atten:
-            HR, HM = H_all[0: XR.size(0)], H_all[XR.size(0):]
+            HR, HM = H_all[0 : XR.size(0)], H_all[XR.size(0) :]
             atten = self.atten_layer(HM, HR)
-            A = A*atten
+            A = A * atten
 
         # get Z
         qz_mean_all, qz_logscale_all = torch.split(self.q_z(H_all), self.dim_z, 1)
@@ -576,9 +583,9 @@ class RegressionFNP(nn.Module):
         )
 
         if self.add_atten:
-            HR, HM = H_all[0: XR.size(0)], H_all[XR.size(0):]
+            HR, HM = H_all[0 : XR.size(0)], H_all[XR.size(0) :]
             atten = self.atten_layer(HM, HR)
-            A = A*atten
+            A = A * atten
 
         pz_mean_all, pz_logscale_all = torch.split(
             self.q_z(H_all[0 : XR.size(0)]), self.dim_z, 1
@@ -623,14 +630,20 @@ class SelfAttention(nn.Module):
     """
     Simple attention layer
     """
+
     def __init__(self, hidden_dim, n_heads=8):
         super(SelfAttention, self).__init__()
-        self._W_k = nn.ModuleList([nn.Linear(hidden_dim, hidden_dim) for _ in range(n_heads)])
-        self._W_v = nn.ModuleList([nn.Linear(hidden_dim, hidden_dim) for _ in range(n_heads)])
-        self._W_q = nn.ModuleList([nn.Linear(hidden_dim, hidden_dim) for _ in range(n_heads)])
-        self._W = nn.Linear(n_heads*hidden_dim, hidden_dim)
+        self._W_k = nn.ModuleList(
+            [nn.Linear(hidden_dim, hidden_dim) for _ in range(n_heads)]
+        )
+        self._W_v = nn.ModuleList(
+            [nn.Linear(hidden_dim, hidden_dim) for _ in range(n_heads)]
+        )
+        self._W_q = nn.ModuleList(
+            [nn.Linear(hidden_dim, hidden_dim) for _ in range(n_heads)]
+        )
+        self._W = nn.Linear(n_heads * hidden_dim, hidden_dim)
         self.n_heads = n_heads
-    
 
     def forward(self, x):
         outs = []
@@ -644,6 +657,7 @@ class SelfAttention(nn.Module):
         outs = torch.cat(outs, dim=-1)
         outs = self._W(outs)
         return outs
+
 
 class RegressionFNP2(nn.Module):
     """
@@ -727,7 +741,10 @@ class RegressionFNP2(nn.Module):
         self.atten_ref = SelfAttention(self.dim_x)
         self.output = nn.Sequential(
             nn.Linear(
-                self.dim_z + self.dim_x if not self.use_plus else self.dim_z + self.dim_u + self.dim_x, self.dim_h
+                self.dim_z + self.dim_x
+                if not self.use_plus
+                else self.dim_z + self.dim_u + self.dim_x,
+                self.dim_h,
             ),
             nn.ReLU(),
             nn.Linear(self.dim_h, 2 * dim_y),
@@ -736,7 +753,7 @@ class RegressionFNP2(nn.Module):
             self.atten_layer = LatentAtten(self.dim_h)
 
     def forward(self, XR, yR, XM, yM, kl_anneal=1.0):
-        #sR = self.atten_ref(XR).mean(dim=0)
+        # sR = self.atten_ref(XR).mean(dim=0)
         sR = XR.mean(dim=0)
         X_all = torch.cat([XR, XM], dim=0)
         H_all = self.cond_trans(X_all)
@@ -759,9 +776,9 @@ class RegressionFNP2(nn.Module):
             u[XR.size(0) :], u[0 : XR.size(0)], self.pairwise_g, training=self.training
         )
         if self.add_atten:
-            HR, HM = H_all[0: XR.size(0)], H_all[XR.size(0):]
+            HR, HM = H_all[0 : XR.size(0)], H_all[XR.size(0) :]
             atten = self.atten_layer(HM, HR)
-            A = A*atten
+            A = A * atten
 
         # get Z
         qz_mean_all, qz_logscale_all = torch.split(self.q_z(H_all), self.dim_z, 1)
@@ -814,7 +831,7 @@ class RegressionFNP2(nn.Module):
             log_pqz_M = torch.sum(pqz_all[XR.size(0) :])
 
         final_rep = z if not self.use_plus else torch.cat([z, u], dim=1)
-        sR = sR.repeat(final_rep.shape[0],1)
+        sR = sR.repeat(final_rep.shape[0], 1)
         final_rep = torch.cat([sR, final_rep], dim=-1)
 
         mean_y, logstd_y = torch.split(self.output(final_rep), 1, dim=1)
@@ -844,7 +861,7 @@ class RegressionFNP2(nn.Module):
         return loss, mean_y, logstd_y
 
     def predict(self, x_new, XR, yR, sample=True):
-        #sR = self.atten_ref(XR).mean(dim=0)
+        # sR = self.atten_ref(XR).mean(dim=0)
         sR = XR.mean(dim=0)
         H_all = self.cond_trans(torch.cat([XR, x_new], 0))
 
@@ -858,9 +875,9 @@ class RegressionFNP2(nn.Module):
         )
 
         if self.add_atten:
-            HR, HM = H_all[0: XR.size(0)], H_all[XR.size(0):]
+            HR, HM = H_all[0 : XR.size(0)], H_all[XR.size(0) :]
             atten = self.atten_layer(HM, HR)
-            A = A*atten
+            A = A * atten
 
         pz_mean_all, pz_logscale_all = torch.split(
             self.q_z(H_all[0 : XR.size(0)]), self.dim_z, 1
@@ -880,7 +897,7 @@ class RegressionFNP2(nn.Module):
 
         z = pz.rsample()
         final_rep = z if not self.use_plus else torch.cat([z, u[XR.size(0) :]], dim=1)
-        sR = sR.repeat(final_rep.shape[0],1)
+        sR = sR.repeat(final_rep.shape[0], 1)
         final_rep = torch.cat([sR, final_rep], dim=-1)
 
         mean_y, logstd_y = torch.split(self.output(final_rep), 1, dim=1)

@@ -47,6 +47,7 @@ model = "ili2_2017_2"
 test_data = load_data(f"./saves/{model}_test.pkl")
 train_data = load_data(f"./saves/{model}_train.pkl")
 
+
 def transform_gp(test_data, train_data):
 
     gp_model = build_GP(
@@ -68,6 +69,7 @@ def transform_gp(test_data, train_data):
 
     return preds_gp, var_gp
 
+
 def transform_iso(test_data, train_data):
     iso_model = build_iso(
         train_data["pred"].astype(np.float64).reshape(-1, 1),
@@ -87,4 +89,3 @@ def transform_iso(test_data, train_data):
     )
 
     return preds_iso, var_iso
-

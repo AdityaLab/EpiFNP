@@ -5,3 +5,5 @@
 *.pth
 envs/*
 .vscode/*
+env/*
+env11/*

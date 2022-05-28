@@ -35,8 +35,8 @@ parser.add_option("-n", "--num", dest="num", type="string")
 
 train_seasons = list(range(2003, options.testyear))
 test_seasons = [options.testyear]
-#train_seasons = list(range(2003, 2019))
-#test_seasons = [2019]
+# train_seasons = list(range(2003, 2019))
+# test_seasons = [2019]
 print(train_seasons, test_seasons)
 
 # train_seasons = [2003, 2004, 2005, 2006, 2007, 2008, 2009]
@@ -57,9 +57,11 @@ def one_hot(idx, dim=len(city_idx)):
     ans[idx] = 1.0
     return ans
 
+
 def save_data(obj, filepath):
     with open(filepath, "wb") as fl:
         pickle.dump(obj, fl)
+
 
 full_x = np.array(
     [
@@ -183,14 +185,14 @@ train_meta_, train_x_, train_y_, train_lens_ = create_tensors(
 
 test_meta, test_x, test_y, test_lens = create_tensors(test_meta, test_x, test_y)
 
-full_x_chunks = np.zeros((full_x.shape[0]*4, full_x.shape[1], full_x.shape[2]))
-full_meta_chunks = np.zeros((full_meta.shape[0]*4, full_meta.shape[1]))
-for i,s in enumerate(full_x):
-    full_x_chunks[i*4, -20:] = s[:20]
-    full_x_chunks[i*4+1,-30:] = s[:30]
-    full_x_chunks[i*4+2,-40:] = s[:40]
-    full_x_chunks[i*4+3, :] = s
-    full_meta_chunks[i*4: i*4+4] = full_meta[i]
+full_x_chunks = np.zeros((full_x.shape[0] * 4, full_x.shape[1], full_x.shape[2]))
+full_meta_chunks = np.zeros((full_meta.shape[0] * 4, full_meta.shape[1]))
+for i, s in enumerate(full_x):
+    full_x_chunks[i * 4, -20:] = s[:20]
+    full_x_chunks[i * 4 + 1, -30:] = s[:30]
+    full_x_chunks[i * 4 + 2, -40:] = s[:40]
+    full_x_chunks[i * 4 + 3, :] = s
+    full_meta_chunks[i * 4 : i * 4 + 4] = full_meta[i]
 
 full_x = float_tensor(full_x)
 full_meta = float_tensor(full_meta)
@@ -267,9 +269,8 @@ def evaluate(sample=True, dtype="test"):
         labels.detach().cpu().numpy().ravel(),
         vars.mean().detach().cpu().numpy().ravel(),
         full_embeds.detach().cpu().numpy(),
-        x_embeds.detach().cpu().numpy()
+        x_embeds.detach().cpu().numpy(),
     )
-
 
 
 load_model(f"model_chkp/model{model_num}")
@@ -286,7 +287,14 @@ plt.plot(yt, label="True Value", color="green")
 plt.legend()
 plt.title(f"RMSE: {e}")
 plt.savefig(f"plots/Test{model_num}.png")
-dt = {"rmse": e, "target": yt, "pred": yp, "vars": vars, "fem": fem, "tem": tem,}
+dt = {
+    "rmse": e,
+    "target": yt,
+    "pred": yp,
+    "vars": vars,
+    "fem": fem,
+    "tem": tem,
+}
 save_data(dt, f"./saves/{model_num}_test.pkl")
 
 e, yp, yt, vars, _, _ = evaluate(True, dtype="val")
@@ -314,5 +322,12 @@ plt.plot(yt, label="True Value", color="green")
 plt.legend()
 plt.title(f"RMSE: {e}")
 plt.savefig(f"plots/Train{model_num}.png")
-dt = {"rmse": e, "target": yt, "pred": yp, "vars": vars, "fem": fem, "tem": tem,}
+dt = {
+    "rmse": e,
+    "target": yt,
+    "pred": yp,
+    "vars": vars,
+    "fem": fem,
+    "tem": tem,
+}
 save_data(dt, f"./saves/{model_num}_train.pkl")

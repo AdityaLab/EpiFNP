@@ -49,8 +49,8 @@ print(train_seasons, test_seasons)
 
 # train_seasons = [2003, 2004, 2005, 2006, 2007, 2008, 2009]
 # test_seasons = [2010]
-regions = ["X"]
-# regions = [f"Region {i}" for i in range(1,11)]
+# regions = ["X"]
+regions = [f"Region {i}" for i in range(1,11)]
 
 week_ahead = options.week_ahead
 val_frac = 5
@@ -71,7 +71,7 @@ def save_data(obj, filepath):
     with open(filepath, "wb") as fl:
         pickle.dump(obj, fl)
 
-
+import pdb;pdb.set_trace()
 full_x = np.array(
     [
         np.array(get_dataset(s, r), dtype="float32")[-53:]

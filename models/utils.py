@@ -4,13 +4,12 @@ import torch.nn.functional as F
 import numpy as np
 from torch.distributions import Bernoulli
 from itertools import product
-import global_config
 
-# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-# float_tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
-def float_tensor(*args):
-    return torch.FloatTensor(*args).to(global_config.device)
-# float_tensor = torch.FloatTensor
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+float_tensor = (
+    torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
+)
+
 
 def logitexp(logp):
     # https://github.com/pytorch/pytorch/issues/4007

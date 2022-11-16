@@ -128,7 +128,6 @@ def plot_train_info(runtimeid, losses, errors, train_errors, variances, savedir)
     plt.savefig(f"plots/{savedir}/vars{runtimeid}.png")
 
 def evaluate_and_plot(runtimeid, eval_params, savedir):
-    import pdb;pdb.set_trace()
     e, yp, yt, vars, fem, tem, _ = evaluate(*eval_params, sample=True)
     yp = np.array([evaluate(*eval_params, sample=True)[1] for _ in range(n_eval_test)])
     yp, vars = np.mean(yp, 0), np.var(yp, 0)
@@ -139,10 +138,10 @@ def evaluate_and_plot(runtimeid, eval_params, savedir):
     plt.fill_between(np.arange(len(yp)), yp + dev, yp - dev, color="blue", alpha=0.2)
     plt.plot(yt, label="True Value", color="green")
     plt.legend()
-    plt.title(f"RMSE: {e}")
+    plt.title(f"MSE: {e}")
     plt.savefig(f"plots/{savedir}/Test{runtimeid}.png")
     dt = {
-        "rmse": e,
+        "mse": e,
         "target": yt,
         "pred": yp,
         "vars": vars,
@@ -216,6 +215,7 @@ if __name__ == '__main__':
     global_config.device = device
 
     train_seasons = list(range(2003, options.testyear))
+    # TODO change validation season
     val_seasons = [train_seasons[-1]]
     train_seasons = train_seasons[:-1]
     test_seasons = [options.testyear]

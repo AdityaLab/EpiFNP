@@ -44,9 +44,10 @@ done
 done
 done
 '''
-
+# Split lambdas
 lambdas = [0.1, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0]
 num_run = 4
+savedir = "run_commands/sop"
 
 for i in range(num_run):
     if i == num_run - 1:
@@ -54,5 +55,5 @@ for i in range(num_run):
     else:
         lambdasi = " ".join([str(vi) for vi in lambdas[int(i*len(lambdas)/num_run):int((i+1)*len(lambdas)/num_run)]])
     cmd = template.format(lambdasi)
-    with open(f'run_commands/sop/run{i}.sh', 'wt') as f:
+    with open(f'{savedir}/run{i}.sh', 'wt') as f:
         f.write(cmd)

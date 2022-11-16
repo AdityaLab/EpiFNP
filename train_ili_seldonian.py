@@ -13,11 +13,9 @@ from model_utils import *
 from models.utils import float_tensor
 from sop_utils import * 
 from ast import literal_eval
-import global_config
+from copy import deepcopy
 
-for d in ["model_chkp", "plots", "saves"]:
-    if not os.path.exists(d):
-        os.mkdir(d)
+import global_config
 
 
 def set_seed(manualseed):
@@ -77,12 +75,16 @@ class Logger:
         with open(self.filepath, 'w') as f:
             json.dump(self.data, f, indent = 4)
 
-class SeldonianHooker:
-    def __init__(self, reg_loss_func, size_Ds, params, logger) -> None:
+        
+class SeldonianHooker(nn.Module):
+    def __init__(self, reg_loss_func, size_Ds, params, logger, barrier_value=10) -> None:
+        super().__init__()
+
         self.reg_loss_func = reg_loss_func
         self.size_Ds = size_Ds
         self.params = params
         self.logger = logger
+        self.barrier_value = barrier_value
 
     def forward(self, model_loss, preds, y, batch_regions, **kwargs):
         '''
@@ -102,7 +104,7 @@ class SeldonianHooker:
                 seldonian_loss += params['lamda'] * Z.abs().mean() / len(Zs) # LAMBDA * ((Z**2)**0.5).mean() 
             else: # upperBound > epsilon OR is_reset == True
                 if not is_reset: # first time the upperbound > epslion
-                    seldonian_loss = params['barrier_value']
+                    seldonian_loss = self.barrier_value
                     is_reset = True
                 if upperBound > epsilon: # don't care about cases with upperbound <= epsilon
                     cnt_failed += 1
@@ -113,22 +115,21 @@ class SeldonianHooker:
         return seldonian_loss
 
 
-def plot_train_info(runtimeid, losses, errors, train_errors, variances): 
+def plot_train_info(runtimeid, losses, errors, train_errors, variances, savedir): 
     plt.figure(1)
     plt.plot(losses)
-    plt.savefig(f"plots/losses{runtimeid}.png")
+    plt.savefig(f"plots/{savedir}/losses{runtimeid}.png")
     plt.figure(2)
     plt.plot(errors)
     plt.plot(train_errors)
-    plt.savefig(f"plots/errors{runtimeid}.png")
+    plt.savefig(f"plots/{savedir}/errors{runtimeid}.png")
     plt.figure(3)
     plt.plot(variances)
-    plt.savefig(f"plots/vars{runtimeid}.png")
+    plt.savefig(f"plots/{savedir}/vars{runtimeid}.png")
 
-
-def evaluate_and_plot(runtimeid, eval_params):
-    e, yp, yt, vars, fem, tem = evaluate(*eval_params, sample=True)
+def evaluate_and_plot(runtimeid, eval_params, savedir):
     import pdb;pdb.set_trace()
+    e, yp, yt, vars, fem, tem, _ = evaluate(*eval_params, sample=True)
     yp = np.array([evaluate(*eval_params, sample=True)[1] for _ in range(n_eval_test)])
     yp, vars = np.mean(yp, 0), np.var(yp, 0)
     e = np.mean((yp - yt) ** 2)
@@ -139,7 +140,7 @@ def evaluate_and_plot(runtimeid, eval_params):
     plt.plot(yt, label="True Value", color="green")
     plt.legend()
     plt.title(f"RMSE: {e}")
-    plt.savefig(f"plots/Test{runtimeid}.png")
+    plt.savefig(f"plots/{savedir}/Test{runtimeid}.png")
     dt = {
         "rmse": e,
         "target": yt,
@@ -148,9 +149,9 @@ def evaluate_and_plot(runtimeid, eval_params):
         "fem": fem,
         "tem": tem,
     }
-    save_data(dt, f"./saves/{runtimeid}_test.pkl")
+    save_data(dt, f"./saves/{savedir}/{runtimeid}_test.pkl")
 
-    e, yp, yt, vars, _, _ = evaluate(*eval_params, sample=True, dtype="val")
+    e, yp, yt, vars, _, _, _ = evaluate(*eval_params, sample=True, dtype="val")
     yp = np.array([evaluate(*eval_params, sample=True, dtype="val")[1] for _ in range(n_eval_test)])
     yp, vars = np.mean(yp, 0), np.var(yp, 0)
     e = np.mean((yp - yt) ** 2)
@@ -161,10 +162,10 @@ def evaluate_and_plot(runtimeid, eval_params):
     plt.plot(yt, label="True Value", color="green")
     plt.legend()
     plt.title(f"RMSE: {e}")
-    plt.savefig(f"plots/Val{runtimeid}.png")
+    plt.savefig(f"plots/{savedir}/Val{runtimeid}.png")
 
-    e, yp, yt, vars, fem, tem = evaluate(*eval_params, sample=True, dtype="all")
-    yp = np.array([evaluate(*eval_params, sample=True, dtype="all")[1] for _ in range(n_eval_train)])
+    e, yp, yt, vars, fem, tem , _= evaluate(*eval_params, sample=True, dtype="train")
+    yp = np.array([evaluate(*eval_params, sample=True, dtype="train")[1] for _ in range(n_eval_train)])
     yp, vars = np.mean(yp, 0), np.var(yp, 0)
     e = np.mean((yp - yt) ** 2)
     dev = np.sqrt(vars) * 1.95
@@ -174,7 +175,7 @@ def evaluate_and_plot(runtimeid, eval_params):
     plt.plot(yt, label="True Value", color="green")
     plt.legend()
     plt.title(f"RMSE: {e}")
-    plt.savefig(f"plots/Train{runtimeid}.png")
+    plt.savefig(f"plots/{savedir}/Train{runtimeid}.png")
     dt = {
         "rmse": e,
         "target": yt,
@@ -183,14 +184,14 @@ def evaluate_and_plot(runtimeid, eval_params):
         "fem": fem,
         "tem": tem,
     }
-    save_data(dt, f"./saves/{runtimeid}_train.pkl")
+    save_data(dt, f"./saves/{savedir}/{runtimeid}_train.pkl")
 
 
 if __name__ == '__main__':
 
     parser = OptionParser()
     parser.add_option("-m", "--model_name", dest="model_name", type="string")
-    parser.add_option("-d", "--dev", dest="dev", type="string")
+    parser.add_option("-d", "--dev", dest="dev", type="string", default="cpu")
     parser.add_option("-y", "--year", dest="testyear", type="int")
     parser.add_option("-w", "--week", dest="week_ahead", type="int")
     parser.add_option("-a", "--atten", dest="atten", type="string")
@@ -205,6 +206,7 @@ if __name__ == '__main__':
     parser.add_option("--delta", dest="delta", type="float", default=0.05)
     parser.add_option("--savedir", dest="savedir", type="string", default=None)
     parser.add_option("--chkp_pattern", dest="chkp_pattern", type="string", default=None)
+    parser.add_option("--test", dest="test", action="store_true", default=False)
 
     (options, args) = parser.parse_args()
 
@@ -214,10 +216,12 @@ if __name__ == '__main__':
     global_config.device = device
 
     train_seasons = list(range(2003, options.testyear))
+    val_seasons = [train_seasons[-1]]
+    train_seasons = train_seasons[:-1]
     test_seasons = [options.testyear]
     # train_seasons = list(range(2003, 2019))
     # test_seasons = [2019]
-    print(train_seasons, test_seasons)
+    print(train_seasons, val_seasons, test_seasons)
 
     # train_seasons = [2003, 2004, 2005, 2006, 2007, 2008, 2009]
     # test_seasons = [2010]
@@ -263,9 +267,12 @@ if __name__ == '__main__':
     print(f'logging to {logfilepath}')
     logger = Logger(logfilepath)
 
+    for d in ["model_chkp", "plots", "saves"]:
+        Path(f"{d}/{options.savedir}").mkdir(exist_ok=True, parents=True)
+
     ## Prepare data
     train_info, val_info, test_info = \
-        extract_data(train_seasons[:-1], [train_seasons[-1]], test_seasons, regions, city_idx)
+        extract_data(train_seasons, val_seasons, test_seasons, regions, city_idx)
     full_x, full_y, full_meta = train_info 
     full_x_val, full_y_val, full_meta_val = val_info
     full_x_test, full_y_test, full_meta_test = test_info
@@ -293,7 +300,7 @@ if __name__ == '__main__':
 
     train_meta, train_x, train_y, train_lens = \
         create_tensors(train_meta, train_x, train_y, device)
-    import pdb;pdb.set_trace()
+
     val_meta, val_x, val_y, val_lens = \
         create_tensors(val_meta, val_x, val_y, device)
     
@@ -340,19 +347,31 @@ if __name__ == '__main__':
     #     train_mask_[:, val_perm, :],
     # )
 
-    if options.chkp_pattern is None:
-        params = dict(
-            lamda = options.lamda, 
-            eps = options.eps, 
-            delta = options.delta, 
-            logger = logger
-        )
-        regional_criterion = RegionalExpertLoss(params, city_idx.values(),
-                                        prior_pairs=prior_pairs)
+    params = dict(
+        lamda = options.lamda, 
+        eps = options.eps, 
+        delta = options.delta
+    )
+    save_params = deepcopy(options.__dict__)
+    save_params.update(params)
+    logger.log_value("params", save_params)
+
+    regional_criterion = RegionalExpertLoss(params, city_idx.values(),
+                                    prior_pairs=prior_pairs)
+                                    
+    if options.chkp_pattern is not None: 
+        # load model for testing or fine-tuning
+        print(f"loading pretrained model from {options.chkp_pattern}")
+        chkp_prefix = options.chkp_pattern.split('*')[0]
+        load_model(emb_model, emb_model_full, fnp_model, chkp_prefix)
+
+
+    if not options.test:
+
         size_Ds = val_x.shape[0]
         seldonian_hooker = SeldonianHooker(regional_criterion, size_Ds, params, logger)
 
-        if model_name.upper() == 'SOP':
+        if 'SOP' in model_name.upper():
             before_backward_hooker = seldonian_hooker
         else:
             before_backward_hooker = None
@@ -362,24 +381,57 @@ if __name__ == '__main__':
             train_model(emb_model, emb_model_full, fnp_model, optimizer, 
                         full_meta, full_x, full_y, 
                         train_meta, train_x, train_y, train_mask, 
-                        train_meta_, train_x_, train_y_, train_mask_,
                         val_meta, val_x, val_y, val_mask, 
                         test_meta, test_x, test_y, test_mask,
                         EPOCHS, runtimeid, n_eval_train, 
-                        regional_criterion, before_backward_hooker, logger)
+                        regional_criterion, before_backward_hooker, logger, savedir=options.savedir)
 
-        print(f"Val MSE error: {error}")
-        plot_train_info(runtimeid, losses, errors, train_errors, variances)
+        plot_train_info(runtimeid, losses, errors, train_errors, variances, options.savedir)
 
-    else:
-        chkp_prefix = options.chkp_pattern.split('*')[0]
-        load_model(emb_model, emb_model_full, fnp_model, chkp_prefix)
 
+    """
+        Safety test in Ds
+    """
     eval_params = (emb_model, emb_model_full, fnp_model, 
-                full_meta, full_x, full_y, 
-                train_meta, train_x, train_y, train_mask,
-                train_meta_, train_x_, train_y_, train_mask_,
-                val_meta, val_x, val_y, val_mask, 
-                test_meta, test_x, test_y, test_mask)
+            full_meta, full_x, full_y, 
+            train_meta, train_x, train_y, train_mask,
+            val_meta, val_x, val_y, val_mask, 
+            test_meta, test_x, test_y, test_mask)
 
-    evaluate_and_plot(runtimeid, eval_params)
+    yps = []
+    for _ in range(n_eval_test): 
+        _, yp, ys, _, _, _, batch_regions = evaluate(*eval_params, sample=True, dtype='val')
+        yps.append(yp) 
+    yps = np.array(yps)
+    yp = np.mean(yps, 0)
+
+    rmse = np.sqrt(np.mean((yp - ys) ** 2))
+    logger.log_value('safetytest/rmse', rmse.item())
+    if not check_prob_bound(regional_criterion, yp, ys, batch_regions, logger):
+        # raise Exception('NSF')
+        NSF = True
+        print('>>>NSF')
+    else:
+        print('>>>prob bound OK')
+
+    """
+        Evaluation
+    """
+    yps = []
+    for _ in range(n_eval_test): 
+        _, yp, ys, _, _, _, batch_regions = evaluate(*eval_params, sample=True, dtype='test')
+        yps.append(yp) 
+    yps = np.array(yps)
+    yp = np.mean(yps, 0)
+
+    rmse = np.sqrt(np.mean((yp - ys) ** 2))
+    logger.log_value('test/rmse', rmse.item())
+
+    test_model(regional_criterion, yp, ys, batch_regions, logger)
+
+    # plots
+    evaluate_and_plot(runtimeid, eval_params, options.savedir)
+
+    # Finish 
+    logger.close()
+    print(f'logged to {logfilepath}')

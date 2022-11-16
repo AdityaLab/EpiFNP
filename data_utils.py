@@ -55,7 +55,7 @@ def extract_data(train_seasons, val_seasons, test_seasons, regions, city_idx):
 
     full_x_test = np.array(
         [
-            np.array(get_dataset(s, r, df), dtype="float32")[-53:]
+            np.array(get_dataset(s, r, df), dtype="float32")[:40] # TODO: remove data when covid happened
             for s in test_seasons
             for r in regions
         ]

@@ -54,7 +54,6 @@ def load_model(emb_model, emb_model_full, fnp_model, file_prefix: str):
 def evaluate(emb_model, emb_model_full, fnp_model, 
             full_meta, full_x, full_y, 
             train_meta, train_x, train_y, train_mask,
-            train_meta_, train_x_, train_y_, train_mask_,
             val_meta, val_x, val_y, val_mask, 
             test_meta, test_x, test_y, test_mask, sample=True, dtype="test"):
     with torch.no_grad():
@@ -63,25 +62,32 @@ def evaluate(emb_model, emb_model_full, fnp_model,
         fnp_model.eval()
         full_embeds = emb_model_full(full_x.transpose(1, 0), full_meta)
         if dtype == "val":
-            x_embeds = emb_model.forward_mask(val_x.transpose(1, 0), val_meta, val_mask)
+            x_embeds = emb_model.forward_mask(
+                val_x.transpose(1, 0), val_meta, val_mask
+            )
+            batch_regions = [str(ai) for ai in torch.where(val_meta == 1.0)[1].cpu().numpy()]
         elif dtype == "test":
             x_embeds = emb_model.forward_mask(
                 test_x.transpose(1, 0), test_meta, test_mask
             )
+            batch_regions = [str(ai) for ai in torch.where(test_meta == 1.0)[1].cpu().numpy()]
+
         elif dtype == "train":
             x_embeds = emb_model.forward_mask(
                 train_x.transpose(1, 0), train_meta, train_mask
             )
-        elif dtype == "all":
-            x_embeds = emb_model.forward_mask(
-                train_x_.transpose(1, 0), train_meta_, train_mask_
-            )
+            batch_regions = [str(ai) for ai in torch.where(train_meta == 1.0)[1].cpu().numpy()]
+
+        # elif dtype == "all":
+        #     x_embeds = emb_model.forward_mask(
+        #         train_x_.transpose(1, 0), train_meta_, train_mask_
+        #     )
         else:
             raise ValueError("Incorrect dtype")
         y_pred, _, vars, _, _, _, _ = fnp_model.predict(
             x_embeds, full_embeds, full_y, sample=sample
         )
-    labels_dict = {"val": val_y, "test": test_y, "train": train_y, "all": train_y_}
+    labels_dict = {"val": val_y, "test": test_y, "train": train_y} # "all": train_y_
     labels = labels_dict[dtype]
     mse_error = torch.pow(y_pred - labels, 2).mean().sqrt().detach().cpu().numpy()
     return (
@@ -91,6 +97,7 @@ def evaluate(emb_model, emb_model_full, fnp_model,
         vars.mean().detach().cpu().numpy().ravel(),
         full_embeds.detach().cpu().numpy(),
         x_embeds.detach().cpu().numpy(),
+        batch_regions
     )
 
 def create_model(attn, city_idx, train_meta, device): 
@@ -145,19 +152,18 @@ def create_model(attn, city_idx, train_meta, device):
 def train_model(emb_model, emb_model_full, fnp_model, optimizer, 
             full_meta, full_x, full_y, 
             train_meta, train_x, train_y, train_mask, 
-            train_meta_, train_x_, train_y_, train_mask_,
             val_meta, val_x, val_y, val_mask, 
             test_meta, test_x, test_y, test_mask,
-            EPOCHS, runtimeid, n_eval, regional_criterion, before_backward_hooker=None, logger=None):
+            EPOCHS, runtimeid, n_eval, regional_criterion, before_backward_hooker=None, logger=None, savedir=None):
     
-    error = 100.0
+    val_error = 100.0
     losses = []
     errors = []
     train_errors = []
     variances = []
     best_ep = 0
-
-    train_regions_idx = [str(ai) for ai in torch.where(train_meta == 1.0)[1].cpu().numpy()]
+    printed = False
+    batch_regions = [str(ai) for ai in torch.where(train_meta == 1.0)[1].cpu().numpy()]
 
     for ep in range(EPOCHS):
         emb_model.train()
@@ -171,7 +177,10 @@ def train_model(emb_model, emb_model_full, fnp_model, optimizer,
 
         # seldonian obj loss if activated
         if before_backward_hooker is not None:
-            loss = before_backward_hooker(loss, yp[full_x.shape[0] :], train_y, train_meta)
+            if not printed:
+                print("using Seldonian loss ...")
+                printed = True
+            loss = before_backward_hooker(loss, yp[full_x.shape[0] :], train_y, batch_regions, ep=ep)
         # done
 
         loss.backward()
@@ -214,14 +223,19 @@ def train_model(emb_model, emb_model_full, fnp_model, optimizer,
         #     save_model(emb_model, emb_model_full, fnp_model, f"model_chkp/model{runtimeid}")
         #     error = e
         #     best_ep = ep + 1
+
+        logger.log_value('train/rmse', train_errors[-1].item(), ep) 
+
         if (ep == 0) or (ep == EPOCHS - 1): # last epoch: 
             # import pdb;pdb.set_trace()
             # save prediciton for inspection 
-            obj = {r: (predi.item(), yi.item()) for r , predi, yi in zip(train_regions_idx, yp, train_y)}
+            obj = {r: (predi.item(), yi.item()) for r , predi, yi in zip(batch_regions, yp, train_y)}
             logger.log_value('train/prediction', obj, ep)
-            Zs = regional_criterion(yp[full_x.shape[0] :], train_y, train_regions_idx)
+            Zs = regional_criterion(yp[full_x.shape[0] :], train_y, batch_regions)
             Zsmean = {rp: zs.abs().mean().detach().cpu().numpy().item() for rp, zs in Zs.items()}
             logger.log_value('train/Zsmean', Zsmean, ep, flush=True)
 
-    save_model(emb_model, emb_model_full, fnp_model, f"model_chkp/model{runtimeid}")
-    return error, errors, losses, train_errors, variances
+        if (ep % 100 == 0) or (ep == EPOCHS -1):
+            save_model(emb_model, emb_model_full, fnp_model, f"model_chkp/{savedir}/model{runtimeid}")
+
+    return val_error, errors, losses, train_errors, variances

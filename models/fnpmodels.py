@@ -188,6 +188,78 @@ class EmbedAttenSeq(nn.Module):
         return out
 
 
+class EmbedTransSeq(nn.Module):
+    """
+    Module to embed a sequence. Adds Attention module to
+    """
+
+    def __init__(
+        self,
+        dim_seq_in: int = 5,
+        dim_trans_in: int = 50,
+        dim_metadata: int = 3,
+        hidden_dim: int = 40,
+        dim_out: int = 50,
+        n_layers: int = 1,
+        n_heads: int = 1,
+        dropout=0.0,
+    ) -> None:
+
+        super(EmbedTransSeq, self).__init__()
+
+        self.dim_seq_in = dim_seq_in
+        self.dim_metadata = dim_metadata
+        self.hidden_dim = hidden_dim
+        self.dim_out = dim_out
+
+        self.in_layer = nn.Linear(dim_seq_in, dim_trans_in)
+        # Initialize in_layer weights
+        nn.init.xavier_uniform_(self.in_layer.weight)
+        assert dim_trans_in % n_heads == 0
+
+        self.transformer = nn.ModuleList(
+            [
+                nn.TransformerEncoderLayer(
+                    d_model=dim_trans_in,
+                    nhead=n_heads,
+                    dim_feedforward=hidden_dim,
+                    dropout=dropout,
+                )
+                for _ in range(n_layers)
+            ]
+        )
+        self.out_layer = [
+            nn.Linear(
+                in_features=dim_trans_in + self.dim_metadata, out_features=self.dim_out
+            ),
+            nn.Dropout(dropout),
+        ]
+        nn.init.xavier_uniform_(self.out_layer[0].weight)
+        self.out_layer = nn.Sequential(*self.out_layer)
+
+    def forward(self, seqs, metadata):
+        seqs = self.in_layer(seqs)
+        for layer in self.transformer:
+            seqs = layer(seqs)
+
+        seqs = seqs.sum(0)
+        out = self.out_layer(torch.cat([seqs, metadata], dim=1))
+        return out
+
+    def forward_mask(self, seqs, metadata, mask):
+        seqs = self.in_layer(seqs)
+        # import pdb
+
+        # pdb.set_trace()
+        # mask_int = mask.squeeze().transpose(0, 1).bool()
+        for layer in self.transformer:
+            # seqs = layer(seqs, src_key_padding_mask=mask_int)
+            seqs = layer(seqs)
+        seqs = seqs[0]
+        out = self.out_layer(torch.cat([seqs, metadata], dim=1))
+        return out
+
+
 class EmbedAttenSeq2(nn.Module):
     """
     Module to embed a sequence. Adds Attention module to
@@ -257,7 +329,7 @@ class EmbedAttenSeq2(nn.Module):
 
 class EmbedSeq(nn.Module):
     """
-    Module to embed a sequence 
+    Module to embed a sequence
     """
 
     def __init__(
@@ -316,7 +388,7 @@ class EmbedSeq(nn.Module):
 
 class EmbedSeq2(nn.Module):
     """
-    Module to embed a sequence 
+    Module to embed a sequence
     """
 
     def __init__(
@@ -509,7 +581,8 @@ class RegressionFNP(nn.Module):
             )
         else:
             pz_mean_all = torch.mm(
-                self.norm_graph(torch.cat([G, A], dim=0)), qz_mean_all[0 : XR.size(0)],
+                self.norm_graph(torch.cat([G, A], dim=0)),
+                qz_mean_all[0 : XR.size(0)],
             )
             pz_logscale_all = torch.mm(
                 self.norm_graph(torch.cat([G, A], dim=0)),
@@ -798,7 +871,8 @@ class RegressionFNP2(nn.Module):
             )
         else:
             pz_mean_all = torch.mm(
-                self.norm_graph(torch.cat([G, A], dim=0)), qz_mean_all[0 : XR.size(0)],
+                self.norm_graph(torch.cat([G, A], dim=0)),
+                qz_mean_all[0 : XR.size(0)],
             )
             pz_logscale_all = torch.mm(
                 self.norm_graph(torch.cat([G, A], dim=0)),

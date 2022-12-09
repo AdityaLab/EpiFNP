@@ -187,6 +187,36 @@ class EmbedAttenSeq(nn.Module):
         out = self.out_layer(torch.cat([latent_seqs, metadata], dim=1))
         return out
 
+class PositionalEncoding(nn.Module):
+    """
+    Positional encoding as described in "Attention is all you need"
+
+    Args:
+        d_model: the number of expected features in the encoder/decoder inputs (required).
+        dropout: the dropout value (default=0.1).
+        max_len: the max. length of the incoming sequence (default=5000).
+
+    From: https://pytorch.org/tutorials/beginner/transformer_tutorial.html
+    """
+
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Tensor, shape [seq_len, batch_size, embedding_dim]
+        """
+        x = x + self.pe[:x.size(0)]
+        return self.dropout(x)
 
 class EmbedTransSeq(nn.Module):
     """
@@ -216,6 +246,7 @@ class EmbedTransSeq(nn.Module):
         # Initialize in_layer weights
         nn.init.xavier_uniform_(self.in_layer.weight)
         assert dim_trans_in % n_heads == 0
+        self.positional_encoding = PositionalEncoding(dim_trans_in, dropout=dropout, max_len=5000)
 
         self.transformer = nn.ModuleList(
             [
@@ -239,6 +270,7 @@ class EmbedTransSeq(nn.Module):
 
     def forward(self, seqs, metadata):
         seqs = self.in_layer(seqs)
+        seqs = self.positional_encoding(seqs)
         for layer in self.transformer:
             seqs = layer(seqs)
 
@@ -248,6 +280,7 @@ class EmbedTransSeq(nn.Module):
 
     def forward_mask(self, seqs, metadata, mask):
         seqs = self.in_layer(seqs)
+        seqs = self.positional_encoding(seqs)
         # import pdb
 
         # pdb.set_trace()

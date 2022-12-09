@@ -21,3 +21,6 @@ dependencies:
   - black
   - pylint
   - flake8
+  - pip:
+    - aim=3.15
+  

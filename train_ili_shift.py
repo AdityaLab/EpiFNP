@@ -11,6 +11,7 @@ from models.fnpmodels import (
     RegressionFNP2,
     EmbedTransSeq,
 )
+from transforms import shift_start
 import matplotlib.pyplot as plt
 import pandas as pd
 from optparse import OptionParser
@@ -47,7 +48,7 @@ parser.add_option("-y", "--year", dest="testyear", type="int", default=2022)
 parser.add_option("-c", "--curr", dest="curr", type="int", default=5)
 parser.add_option("-w", "--week", dest="week_ahead", type="int")
 parser.add_option("-a", "--atten", dest="atten", type="string")
-parser.add_option("-n", "--num", dest="num", type="string")
+parser.add_option("-r", "--region", dest="region", type="string", default="X")
 parser.add_option("-e", "--epoch", dest="epochs", type="int")
 (options, args) = parser.parse_args()
 
@@ -58,13 +59,13 @@ test_seasons = [options.testyear]
 
 # train_seasons = [2003, 2004, 2005, 2006, 2007, 2008, 2009]
 # test_seasons = [2010]
-regions = ["X"]
+regions = [options.region]
 # regions = [f"Region {i}" for i in range(1,11)]
 
 week_ahead = options.week_ahead
 val_frac = 5
 attn = options.atten
-model_num = options.num
+model_num = f"Shift22_{options.region}_{options.curr}"
 # model_num = 22
 EPOCHS = options.epochs
 
@@ -129,10 +130,6 @@ full_x_test = np.array(
 
 mean_full_x, std_full_x = full_x.mean(), full_x.std()
 
-plt.figure(figsize=(10, 10))
-for i, r in enumerate(train_seasons):
-    plt.plot(full_x[i], color="blue", alpha=0.1)
-
 
 full_meta = np.array([one_hot(city_idx[r]) for s in train_seasons for r in regions])
 full_y = full_x.argmax(-1)
@@ -140,14 +137,23 @@ full_x = full_x[:, :, None]
 mean_first = full_x[:, 0].mean()
 
 
-plt.plot(full_x_test[0], color="red")
-plt.savefig(f"./plots/ILI_{test_seasons[0]}_test.png")
-plt.clf()
 full_meta_test = np.array([one_hot(city_idx[r]) for s in test_seasons for r in regions])
 full_y_test = full_x_test.argmax(-1)
 full_x_test = full_x_test[:, :, None]
-# Scale test so that the mean of the first week is the same as the train
-full_x_test = full_x_test - (full_x_test[:, 0].mean() - mean_first)
+
+
+# Scale the first vale of test data to be the same as train data
+# full_x_test = full_x_test - (full_x_test[:, 0].mean() - mean_first)
+
+full_x, full_x_mask = shift_start(full_x.squeeze(-1), full_x_test.squeeze())
+full_x = full_x[:, :, None]
+
+plt.figure(figsize=(10, 10))
+for i, r in enumerate(train_seasons):
+    plt.plot(full_x[i], color="blue", alpha=0.1)
+plt.plot(full_x_test[0], color="red")
+plt.savefig(f"./plots/ILI_{test_seasons[0]}_test.png")
+plt.clf()
 
 
 def create_dataset(full_meta, full_x, week_ahead=week_ahead):

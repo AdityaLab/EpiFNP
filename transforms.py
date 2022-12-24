@@ -40,9 +40,11 @@ def shift_start(
     return seqs_to_arrs(ans)
 
 
-def scale_to_max(series: List[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+def scale_to_max(
+    series: List[np.ndarray], target: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
     """Scales the series to have max value 1"""
     ans = []
     for ts in series:
-        ans.append(ts / np.max(ts))
+        ans.append(ts / np.max(ts)) * target.max()
     return seqs_to_arrs(ans)

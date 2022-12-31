@@ -187,6 +187,7 @@ class EmbedAttenSeq(nn.Module):
         out = self.out_layer(torch.cat([latent_seqs, metadata], dim=1))
         return out
 
+
 class PositionalEncoding(nn.Module):
     """
     Positional encoding as described in "Attention is all you need"
@@ -204,19 +205,22 @@ class PositionalEncoding(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
         position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model)
+        )
         pe = torch.zeros(max_len, 1, d_model)
         pe[:, 0, 0::2] = torch.sin(position * div_term)
         pe[:, 0, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
+        self.register_buffer("pe", pe)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
             x: Tensor, shape [seq_len, batch_size, embedding_dim]
         """
-        x = x + self.pe[:x.size(0)]
+        x = x + self.pe[: x.size(0)]
         return self.dropout(x)
+
 
 class EmbedTransSeq(nn.Module):
     """
@@ -246,7 +250,9 @@ class EmbedTransSeq(nn.Module):
         # Initialize in_layer weights
         nn.init.xavier_uniform_(self.in_layer.weight)
         assert dim_trans_in % n_heads == 0
-        self.positional_encoding = PositionalEncoding(dim_trans_in, dropout=dropout, max_len=5000)
+        self.positional_encoding = PositionalEncoding(
+            dim_trans_in, dropout=dropout, max_len=5000
+        )
 
         self.transformer = nn.ModuleList(
             [
@@ -1008,6 +1014,310 @@ class RegressionFNP2(nn.Module):
         final_rep = torch.cat([sR, final_rep], dim=-1)
 
         mean_y, logstd_y = torch.split(self.output(final_rep), 1, dim=1)
+        logstd_y = torch.log(0.1 + 0.9 * F.softplus(logstd_y))
+
+        init_y = Normal(mean_y, logstd_y)
+        if sample:
+            y_new_i = init_y.sample()
+        else:
+            y_new_i = mean_y
+
+        y_pred = y_new_i
+
+        if self.transf_y is not None:
+            if torch.cuda.is_available():
+                y_pred = self.transf_y.inverse_transform(y_pred.cpu().data.numpy())
+            else:
+                y_pred = self.transf_y.inverse_transform(y_pred.data.numpy())
+
+        return y_pred, mean_y, logstd_y, u[XR.size(0) :], u[: XR.size(0)], init_y, A
+
+
+class MultiDecoder(nn.Module):
+    """
+    Decoder for multiple time-ahead
+    """
+
+    def __init__(self, dim_in, dim_y, time_steps=4, n_layers=1, dim_h=50):
+        super(MultiDecoder, self).__init__()
+        self.n_layers = n_layers
+        self.dim_h = dim_h
+        self.dim_in = dim_in
+        self.dim_y = dim_y
+        self.time_steps = time_steps
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(dim_in, dim_h))
+        for i in range(n_layers - 1):
+            self.layers.append(nn.Linear(dim_h, dim_h))
+            self.layers.append(nn.ReLU())
+        self.layers.append(nn.Linear(dim_h, dim_y * 2 * time_steps))
+        self.layers = nn.Sequential(*self.layers)
+
+    def forward(self, final_rep):
+        return self.layers(final_rep).reshape(-1, self.time_steps, 2 * self.dim_y)
+
+
+class RNNSimpleDecoder(nn.Module):
+    """
+    Decoder that uses RNN
+    """
+
+    def __init__(self, dim_in, dim_y, time_steps=4, n_layers=1, dim_h=50):
+        super(RNNSimpleDecoder, self).__init__()
+        self.n_layers = n_layers
+        self.dim_h = dim_h
+        self.dim_in = dim_in
+        self.time_steps = time_steps
+        self.gru = nn.GRU(dim_in, dim_h, n_layers, batch_first=True, bidirectional=True)
+        self.out_layer = nn.Linear(2 * dim_h, 2 * dim_y)
+
+    def forward(self, final_rep: torch.Tensor) -> torch.Tensor:
+        final_rep_rep = final_rep.unsqueeze(1).repeat(1, self.time_steps, 1)
+        out = self.out_layer(self.gru(final_rep_rep)[0])  # Batch x time_steps x 2y
+        return out
+
+
+class RegressionFNP3(nn.Module):
+    """
+    Functional Neural Process for auto-regression
+    """
+
+    def __init__(
+        self,
+        dim_x=1,
+        dim_y=1,
+        dim_h=50,
+        transf_y=None,
+        n_layers=1,
+        use_plus=True,
+        num_M=100,
+        dim_u=1,
+        dim_z=1,
+        fb_z=0.0,
+        use_ref_labels=True,
+        use_DAG=True,
+        add_atten=False,
+        time_steps=4,
+        use_GRU=True,
+    ):
+        """
+        :param dim_x: Dimensionality of the input
+        :param dim_y: Dimensionality of the output
+        :param dim_h: Dimensionality of the hidden layers
+        :param transf_y: Transformation of the output (e.g. standardization)
+        :param n_layers: How many hidden layers to use
+        :param use_plus: Whether to use the FNP+
+        :param num_M: How many points exist in the training set that are not part of the reference set
+        :param dim_u: Dimensionality of the latents in the embedding space
+        :param dim_z: Dimensionality of the  latents that summarize the parents
+        :param fb_z: How many free bits do we allow for the latent variable z
+        """
+        super(RegressionFNP3, self).__init__()
+
+        self.num_M = num_M
+        self.dim_x = dim_x
+        self.dim_y = dim_y
+        self.dim_h = dim_h
+        self.dim_u = dim_u
+        self.dim_z = dim_z
+        self.use_plus = use_plus
+        self.fb_z = fb_z
+        self.transf_y = transf_y
+        self.use_ref_labels = use_ref_labels
+        self.use_DAG = use_DAG
+        self.add_atten = add_atten
+        self.time_steps = time_steps
+        # normalizes the graph such that inner products correspond to averages of the parents
+        self.norm_graph = lambda x: x / (torch.sum(x, 1, keepdim=True) + 1e-8)
+
+        self.register_buffer("lambda_z", float_tensor(1).fill_(1e-8))
+
+        # function that assigns the edge probabilities in the graph
+        self.pairwise_g_logscale = nn.Parameter(
+            float_tensor(1).fill_(math.log(math.sqrt(self.dim_u)))
+        )
+        self.pairwise_g = lambda x: logitexp(
+            -0.5
+            * torch.sum(
+                torch.pow(x[:, self.dim_u :] - x[:, 0 : self.dim_u], 2), 1, keepdim=True
+            )
+            / self.pairwise_g_logscale.exp()
+        ).view(x.size(0), 1)
+        # transformation of the input
+
+        init = [nn.Linear(dim_x, self.dim_h), nn.ReLU()]
+        for i in range(n_layers - 1):
+            init += [nn.Linear(self.dim_h, self.dim_h), nn.ReLU()]
+        self.cond_trans = nn.Sequential(*init)
+        # p(u|x)
+        self.p_u = nn.Linear(self.dim_h, 2 * self.dim_u)
+        # q(z|x)
+        self.q_z = nn.Linear(self.dim_h, 2 * self.dim_z)
+        # for p(z|A, XR, yR)
+        if use_ref_labels:
+            self.trans_cond_y = nn.Linear(self.dim_y, 2 * self.dim_z)
+
+        # p(y|z) or p(y|z, u)
+        # TODO: Add for sR input
+        self.atten_ref = SelfAttention(self.dim_x)
+        if use_GRU:
+            self.output_layer = RNNSimpleDecoder
+        else:
+            self.output_layer = MultiDecoder
+        self.output = self.output_layer(
+            self.dim_z + self.dim_x
+            if not self.use_plus
+            else self.dim_z + self.dim_u + self.dim_x,
+            dim_y,
+            self.time_steps,
+            1,
+            self.dim_h,
+        )
+        if self.add_atten:
+            self.atten_layer = LatentAtten(self.dim_h)
+
+    def forward(self, XR, yR, XM, yM, kl_anneal=1.0):
+        # sR = self.atten_ref(XR).mean(dim=0)
+        sR = XR.mean(dim=0)
+        X_all = torch.cat([XR, XM], dim=0)
+        H_all = self.cond_trans(X_all)
+
+        # get U
+        pu_mean_all, pu_logscale_all = torch.split(self.p_u(H_all), self.dim_u, dim=1)
+        pu = Normal(pu_mean_all, pu_logscale_all)
+        u = pu.rsample()
+
+        # get G
+        if self.use_DAG:
+            G = sample_DAG(u[0 : XR.size(0)], self.pairwise_g, training=self.training)
+        else:
+            G = sample_Clique(
+                u[0 : XR.size(0)], self.pairwise_g, training=self.training
+            )
+
+        # get A
+        A = sample_bipartite(
+            u[XR.size(0) :], u[0 : XR.size(0)], self.pairwise_g, training=self.training
+        )
+        if self.add_atten:
+            HR, HM = H_all[0 : XR.size(0)], H_all[XR.size(0) :]
+            atten = self.atten_layer(HM, HR)
+            A = A * atten
+
+        # get Z
+        qz_mean_all, qz_logscale_all = torch.split(self.q_z(H_all), self.dim_z, 1)
+        qz = Normal(qz_mean_all, qz_logscale_all)
+        z = qz.rsample()
+        if self.use_ref_labels:
+            cond_y_mean, cond_y_logscale = torch.split(
+                self.trans_cond_y(yR), self.dim_z, 1
+            )
+            pz_mean_all = torch.mm(
+                self.norm_graph(torch.cat([G, A], dim=0)),
+                cond_y_mean + qz_mean_all[0 : XR.size(0)],
+            )
+            pz_logscale_all = torch.mm(
+                self.norm_graph(torch.cat([G, A], dim=0)),
+                cond_y_logscale + qz_logscale_all[0 : XR.size(0)],
+            )
+        else:
+            pz_mean_all = torch.mm(
+                self.norm_graph(torch.cat([G, A], dim=0)),
+                qz_mean_all[0 : XR.size(0)],
+            )
+            pz_logscale_all = torch.mm(
+                self.norm_graph(torch.cat([G, A], dim=0)),
+                qz_logscale_all[0 : XR.size(0)],
+            )
+
+        pz = Normal(pz_mean_all, pz_logscale_all)
+
+        pqz_all = pz.log_prob(z) - qz.log_prob(z)
+
+        # apply free bits for the latent z
+        if self.fb_z > 0:
+            log_qpz = -torch.sum(pqz_all)
+
+            if self.training:
+                if log_qpz.item() > self.fb_z * z.size(0) * z.size(1) * (1 + 0.05):
+                    self.lambda_z = torch.clamp(
+                        self.lambda_z * (1 + 0.1), min=1e-8, max=1.0
+                    )
+                elif log_qpz.item() < self.fb_z * z.size(0) * z.size(1):
+                    self.lambda_z = torch.clamp(
+                        self.lambda_z * (1 - 0.1), min=1e-8, max=1.0
+                    )
+
+            log_pqz_M = self.lambda_z * torch.sum(pqz_all[XR.size(0) :])
+
+        else:
+            log_pqz_M = torch.sum(pqz_all[XR.size(0) :])
+
+        final_rep = z if not self.use_plus else torch.cat([z, u], dim=1)
+        sR = sR.repeat(final_rep.shape[0], 1)
+        final_rep = torch.cat([sR, final_rep], dim=-1)
+
+        final_out = self.output(final_rep)
+        mean_y, logstd_y = final_out[:, :, 0], final_out[:, :, 1]
+        logstd_y = torch.log(0.1 + 0.9 * F.softplus(logstd_y))
+
+        mean_yM = mean_y[XR.size(0) :]
+        logstd_yM = logstd_y[XR.size(0) :]
+
+        # logp(M|S)
+        pyM = Normal(mean_yM, logstd_yM)
+        log_pyM = torch.sum(pyM.log_prob(yM.squeeze(2)))
+
+        obj_M = (log_pyM + log_pqz_M) / float(XM.size(0))
+
+        obj = obj_M
+
+        loss = -obj
+
+        return loss, mean_y, logstd_y
+
+    def predict(self, x_new, XR, yR, sample=True):
+        # sR = self.atten_ref(XR).mean(dim=0)
+        sR = XR.mean(dim=0)
+        H_all = self.cond_trans(torch.cat([XR, x_new], 0))
+
+        # get U
+        pu_mean_all, pu_logscale_all = torch.split(self.p_u(H_all), self.dim_u, dim=1)
+        pu = Normal(pu_mean_all, pu_logscale_all)
+        u = pu.rsample()
+
+        A = sample_bipartite(
+            u[XR.size(0) :], u[0 : XR.size(0)], self.pairwise_g, training=False
+        )
+
+        if self.add_atten:
+            HR, HM = H_all[0 : XR.size(0)], H_all[XR.size(0) :]
+            atten = self.atten_layer(HM, HR)
+            A = A * atten
+
+        pz_mean_all, pz_logscale_all = torch.split(
+            self.q_z(H_all[0 : XR.size(0)]), self.dim_z, 1
+        )
+        if self.use_ref_labels:
+            cond_y_mean, cond_y_logscale = torch.split(
+                self.trans_cond_y(yR), self.dim_z, 1
+            )
+            pz_mean_all = torch.mm(self.norm_graph(A), cond_y_mean + pz_mean_all)
+            pz_logscale_all = torch.mm(
+                self.norm_graph(A), cond_y_logscale + pz_logscale_all
+            )
+        else:
+            pz_mean_all = torch.mm(self.norm_graph(A), pz_mean_all)
+            pz_logscale_all = torch.mm(self.norm_graph(A), pz_logscale_all)
+        pz = Normal(pz_mean_all, pz_logscale_all)
+
+        z = pz.rsample()
+        final_rep = z if not self.use_plus else torch.cat([z, u[XR.size(0) :]], dim=1)
+        sR = sR.repeat(final_rep.shape[0], 1)
+        final_rep = torch.cat([sR, final_rep], dim=-1)
+
+        final_out = self.output(final_rep)
+        mean_y, logstd_y = final_out[:, :, 0], final_out[:, :, 1]
         logstd_y = torch.log(0.1 + 0.9 * F.softplus(logstd_y))
 
         init_y = Normal(mean_y, logstd_y)

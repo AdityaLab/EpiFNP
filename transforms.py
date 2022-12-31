@@ -46,5 +46,5 @@ def scale_to_max(
     """Scales the series to have max value 1"""
     ans = []
     for ts in series:
-        ans.append(ts / np.max(ts)) * target.max()
+        ans.append(ts / np.max(ts) * target.max())
     return seqs_to_arrs(ans)

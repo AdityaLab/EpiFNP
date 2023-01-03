@@ -1176,7 +1176,7 @@ class RegressionFNP3(nn.Module):
         if self.add_atten:
             self.atten_layer = LatentAtten(self.dim_h)
 
-    def forward(self, XR, yR, XM, yM, kl_anneal=1.0):
+    def forward(self, XR, yR, XM, yM, kl_anneal=1.0, diversity_wt=0):
         # sR = self.atten_ref(XR).mean(dim=0)
         sR = XR.mean(dim=0)
         X_all = torch.cat([XR, XM], dim=0)
@@ -1197,8 +1197,14 @@ class RegressionFNP3(nn.Module):
 
         # get A
         A = sample_bipartite(
-            u[XR.size(0) :], u[0 : XR.size(0)], self.pairwise_g, training=self.training
+            u[XR.size(0) :],
+            u[0 : XR.size(0)],
+            self.pairwise_g,
+            training=self.training,
+            get_entropy=(diversity_wt != 0),
         )
+        if diversity_wt != 0:
+            A, entropy = A
         if self.add_atten:
             HR, HM = H_all[0 : XR.size(0)], H_all[XR.size(0) :]
             atten = self.atten_layer(HM, HR)
@@ -1273,6 +1279,8 @@ class RegressionFNP3(nn.Module):
         obj = obj_M
 
         loss = -obj
+        if diversity_wt != 0:
+            loss = loss - diversity_wt * entropy
 
         return loss, mean_y, logstd_y
 

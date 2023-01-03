@@ -51,6 +51,11 @@ class LogitRelaxedBernoulli(object):
             - 2 * F.softplus(-self.temperature * value + self.logits)
         )
 
+    def entropy(self, value):
+        p1 = value * self.log_prob(value)
+        p2 = (1 - value) * self.log_prob(1 - value)
+        return -(p1 + p2)
+
 
 class Normal(object):
     def __init__(self, means, logscales, **kwargs):
@@ -153,7 +158,7 @@ def sample_Clique(Z, g, training=True, temperature=0.3):
     return unsorted_G
 
 
-def sample_bipartite(Z1, Z2, g, training=True, temperature=0.3):
+def sample_bipartite(Z1, Z2, g, training=True, temperature=0.3, get_entropy=False):
     indices = []
     for element in product(range(Z1.size(0)), range(Z2.size(0))):
         indices.append(element)
@@ -163,7 +168,11 @@ def sample_bipartite(Z1, Z2, g, training=True, temperature=0.3):
     logits = g(Z_pairs)
     if training:
         p_edges = LogitRelaxedBernoulli(logits=logits, temperature=temperature)
+        A_vals_raw = p_edges.rsample()
+        if get_entropy:
+            entropy = p_edges.entropy(A_vals_raw).mean()
         A_vals = torch.sigmoid(p_edges.rsample())
+
     else:
         p_edges = Bernoulli(logits=logits)
         A_vals = p_edges.sample()
@@ -172,6 +181,8 @@ def sample_bipartite(Z1, Z2, g, training=True, temperature=0.3):
     A = float_tensor(Z1.size(0), Z2.size(0)).zero_()
     A[indices[:, 0], indices[:, 1]] = A_vals.squeeze()
 
+    if training and get_entropy:
+        return A, entropy
     return A
 
 

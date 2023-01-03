@@ -33,12 +33,13 @@ city_idx["X"] = 0
 
 parser = OptionParser()
 parser.add_option("-y", "--year", dest="testyear", type="int", default=2022)
-parser.add_option("-c", "--curr", dest="curr", type="int", default=5)
+parser.add_option("-c", "--curr", dest="curr", type="int", default=11)
 parser.add_option("-w", "--week", dest="week_ahead", type="int", default=4)
+parser.add_option("--weight", dest="weight", type="int", default=1)
 parser.add_option("-a", "--atten", dest="atten", type="string", default="trans")
 parser.add_option("-d", "--decoder", dest="decoder", type="string", default="rnn")
 parser.add_option("-r", "--region", dest="region", type="string", default="X")
-parser.add_option("-e", "--epoch", dest="epochs", type="int")
+parser.add_option("-e", "--epoch", dest="epochs", type="int", default=3500)
 (options, args) = parser.parse_args()
 
 
@@ -53,7 +54,7 @@ regions = [options.region]
 week_ahead = options.week_ahead
 val_frac = 5
 attn = options.atten
-model_num = f"ShiftAR22_{options.region}_{options.decoder}_{options.curr}"
+model_num = f"WeightAR22_{options.region}_{options.weight}_{options.curr}"
 # model_num = 22
 EPOCHS = options.epochs
 
@@ -187,18 +188,19 @@ def create_dataset_test(full_meta, full_x, week_ahead=week_ahead):
             metas.append(meta)
             seqs.append(seq[: i - week_ahead + 1])
             y.append(seq[i - week_ahead + 1 : i + 1])
-        for i in range(full_x.shape[1], full_x.shape[1] + week_ahead - 1):
+        for i in range(full_x.shape[1], full_x.shape[1] + week_ahead):
             metas.append(meta)
             seqs.append(seq[: i - week_ahead + 1])
-            y.append(np.array([seq[i - week_ahead + 1]] * week_ahead, dtype="float32"))
+            y.append(np.array([seq[i - week_ahead]] * week_ahead, dtype="float32"))
     return np.array(metas, dtype="float32"), seqs, np.array(y, dtype="float32")
 
 
 train_meta, train_x, train_y = create_dataset(full_meta, full_x)
 test_meta, test_x, test_y = create_dataset_test(full_meta_test, full_x_test)
-train_meta = np.concatenate([train_meta, test_meta[: options.curr]], axis=0)
-train_x = train_x + test_x[: options.curr]
-train_y = np.concatenate([train_y, test_y[: options.curr]], axis=0)
+for _ in range(options.weight):
+    train_meta = np.concatenate([train_meta, test_meta[: options.curr]], axis=0)
+    train_x = train_x + test_x[: options.curr]
+    train_y = np.concatenate([train_y, test_y[: options.curr]], axis=0)
 
 
 def create_tensors(metas, seqs, ys):

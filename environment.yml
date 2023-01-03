@@ -23,4 +23,5 @@ dependencies:
   - flake8
   - pip:
     - aim==3.15
-  
+  - mypy
+  - flake8

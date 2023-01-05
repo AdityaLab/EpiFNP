@@ -37,13 +37,15 @@ parser.add_option("-y", "--year", dest="testyear", type="int", default=2022)
 parser.add_option("-c", "--curr", dest="curr", type="int", default=5)
 parser.add_option("-w", "--week", dest="week_ahead", type="int", default=4)
 parser.add_option("-a", "--atten", dest="atten", type="string", default="trans")
-parser.add_option("-d", "--decoder", dest="decoder", type="string", default="rnn")
+parser.add_option("-d", "--decoder", dest="decoder", type="string", default="gru")
 parser.add_option("-r", "--region", dest="region", type="string", default="X")
 parser.add_option("-e", "--epoch", dest="epochs", type="int", default=5500)
 parser.add_option("--shift_vert", action="store_true", dest="shift_vert", default=False)
 parser.add_option("--shift_hor", action="store_true", dest="shift_hor", default=False)
 parser.add_option("--weight", dest="weight", type="int", default=1)
-parser.add_option("--lookback", dest="lookback", type="int", default=0) # 0 means full seq
+parser.add_option(
+    "--lookback", dest="lookback", type="int", default=0
+)  # 0 means full seq
 (options, args) = parser.parse_args()
 
 
@@ -58,7 +60,7 @@ regions = [options.region]
 week_ahead = options.week_ahead
 val_frac = 5
 attn = options.atten
-model_num = f"MultiShiftInstanceAR22_{options.region}_{options.weight}_{options.lookback}_{options.curr}"
+model_num = f"MultiShiftInstanceAR22_{options.region}_{options.weight}_{options.lookback}_{options.shift_vert}_{options.shift_hor}_{options.curr}"
 # model_num = 22
 EPOCHS = options.epochs
 
@@ -182,7 +184,7 @@ def create_dataset(full_meta, full_x, week_ahead=week_ahead):
     for meta, seq in zip(full_meta, full_x):
         for i in range(20, full_x.shape[1]):
             metas.append(meta)
-            if options.lookback==0:
+            if options.lookback == 0:
                 sq = seq[: i - week_ahead + 1]
             else:
                 sq = seq[i - week_ahead - options.lookback + 1 : i - week_ahead + 1]
@@ -205,7 +207,7 @@ def create_dataset_test(full_meta, full_x, week_ahead=week_ahead):
     for meta, seq in zip(full_meta, full_x):
         for i in range(20, full_x.shape[1]):
             metas.append(meta)
-            if options.lookback==0:
+            if options.lookback == 0:
                 sq = seq[: i - week_ahead + 1]
             else:
                 sq = seq[i - week_ahead - options.lookback + 1 : i - week_ahead + 1]
@@ -215,7 +217,7 @@ def create_dataset_test(full_meta, full_x, week_ahead=week_ahead):
             y.append((seq[i - week_ahead + 1 : i + 1] - sq.mean(0)) / sq.std(0))
         for i in range(full_x.shape[1], full_x.shape[1] + week_ahead - 1):
             metas.append(meta)
-            if options.lookback==0:
+            if options.lookback == 0:
                 sq = seq[: i - week_ahead + 1]
             else:
                 sq = seq[i - week_ahead - options.lookback + 1 : i - week_ahead + 1]
@@ -531,6 +533,7 @@ yp_raw = np.array([evaluate(True)[1] for _ in range(1000)])
 yp, vars = np.mean(yp_raw, 0), np.var(yp_raw, 0)
 e = np.mean((yp - yt) ** 2)
 dev = np.sqrt(vars) * 1.95
+os.makedirs("plots/Multi", exist_ok=True)
 for i in range(week_ahead):
     plt.figure(4)
     plt.clf()
@@ -555,7 +558,7 @@ dt = {
     "fem": fem,
     "tem": tem,
 }
-save_data(dt, f"./saves/real_time/{model_num}_test.pkl")
+save_data(dt, f"./saves/multi/{model_num}_test.pkl")
 
 e, yp, yt, vars, _, _ = evaluate(True, dtype="val")
 yp = np.array([evaluate(True, dtype="val")[1] for _ in range(1000)])

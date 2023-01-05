@@ -7,3 +7,4 @@ envs/*
 .vscode/*
 env/*
 env11/*
+*log.txt

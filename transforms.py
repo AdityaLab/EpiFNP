@@ -1,5 +1,5 @@
 """Transform functions for time series"""
-from typing import List, Tuple
+from typing import List, Tuple, Union
 import numpy as np
 
 
@@ -28,7 +28,7 @@ def seqs_to_arrs(seqs: List[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def shift_start(
-    series: List[np.ndarray], target: np.ndarray
+    series: Union[List[np.ndarray], np.ndarray], target: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Shifts the start of the series to the target"""
     ans = []

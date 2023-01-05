@@ -1,3 +1,4 @@
+"""Instance normalization"""
 import numpy as np
 import torch
 import torch.optim as optim
@@ -53,7 +54,7 @@ regions = [options.region]
 week_ahead = options.week_ahead
 val_frac = 5
 attn = options.atten
-model_num = f"ShiftAR22_{options.region}_{options.decoder}_{options.curr}"
+model_num = f"InstanceAR22_{options.region}_{options.decoder}_{options.curr}"
 # model_num = 22
 EPOCHS = options.epochs
 
@@ -159,51 +160,83 @@ full_x_test = full_x_test[:, :, None]
 # Scale the first vale of test data to be the same as train data
 # full_x_test = full_x_test - (full_x_test[:, 0].mean() - mean_first)
 
-full_x, full_x_mask = shift_start(full_x.squeeze(-1), full_x_test.squeeze())
-full_x = full_x[:, :, None]
+# full_x, full_x_mask = shift_start(full_x.squeeze(-1), full_x_test.squeeze())
+# full_x = full_x[:, :, None]
 
 plt.figure(figsize=(10, 10))
 for i, r in enumerate(train_seasons):
     plt.plot(full_x[i], color="blue", alpha=0.1)
 plt.plot(full_x_test[0], color="red")
-plt.savefig(f"./plots/ILI_{test_seasons[0]}_{options.region}_test.png")
+plt.savefig(f"./plots/ILI_{test_seasons[0]}_test.png")
 plt.clf()
 
 
 def create_dataset(full_meta, full_x, week_ahead=week_ahead):
-    metas, seqs, y = [], [], []
+    metas, seqs, y, dp_mean, dp_std = [], [], [], [], []
     for meta, seq in zip(full_meta, full_x):
         for i in range(20, full_x.shape[1]):
             metas.append(meta)
-            seqs.append(seq[: i - week_ahead + 1])
-            y.append(seq[i - week_ahead + 1 : i + 1])
-    return np.array(metas, dtype="float32"), seqs, np.array(y, dtype="float32")
+            sq = seq[: i - week_ahead + 1]
+            sq_mean, sq_std = sq.mean(0), sq.std(0)
+            seqs.append((sq - sq_mean) / sq_std)
+            y.append((seq[i - week_ahead + 1 : i + 1] - sq_mean) / sq_std)
+            dp_mean.append(sq_mean)
+            dp_std.append(sq_std)
+    return (
+        np.array(metas, dtype="float32"),
+        seqs,
+        np.array(y, dtype="float32"),
+        np.array(dp_mean, dtype="float32"),
+        np.array(dp_std, dtype="float32"),
+    )
 
 
 def create_dataset_test(full_meta, full_x, week_ahead=week_ahead):
-    metas, seqs, y = [], [], []
+    metas, seqs, y, dp_mean, dp_std = [], [], [], [], []
     for meta, seq in zip(full_meta, full_x):
         for i in range(20, full_x.shape[1]):
             metas.append(meta)
-            seqs.append(seq[: i - week_ahead + 1])
-            y.append(seq[i - week_ahead + 1 : i + 1])
+            sq = seq[: i - week_ahead + 1]
+            dp_mean.append(sq.mean(0))
+            dp_std.append(sq.std(0))
+            seqs.append((sq - sq.mean(0)) / sq.std(0))
+            y.append((seq[i - week_ahead + 1 : i + 1] - sq.mean(0)) / sq.std(0))
         for i in range(full_x.shape[1], full_x.shape[1] + week_ahead - 1):
             metas.append(meta)
-            seqs.append(seq[: i - week_ahead + 1])
-            y.append(np.array([seq[i - week_ahead + 1]] * week_ahead, dtype="float32"))
-    return np.array(metas, dtype="float32"), seqs, np.array(y, dtype="float32")
+            sq = seq[: i - week_ahead + 1]
+            dp_mean.append(sq.mean(0))
+            dp_std.append(sq.std(0))
+            seqs.append((sq - sq.mean(0)) / sq.std(0))
+            y.append(
+                np.array(
+                    [(seq[i - week_ahead + 1] - sq.mean(0)) / sq.std(0)] * week_ahead,
+                    dtype="float32",
+                )
+            )
+    return (
+        np.array(metas, dtype="float32"),
+        seqs,
+        np.array(y, dtype="float32"),
+        np.array(dp_mean, dtype="float32"),
+        np.array(dp_std, dtype="float32"),
+    )
 
 
-train_meta, train_x, train_y = create_dataset(full_meta, full_x)
-test_meta, test_x, test_y = create_dataset_test(full_meta_test, full_x_test)
+train_meta, train_x, train_y, train_mean, train_std = create_dataset(full_meta, full_x)
+test_meta, test_x, test_y, test_mean, test_std = create_dataset_test(
+    full_meta_test, full_x_test
+)
 train_meta = np.concatenate([train_meta, test_meta[: options.curr]], axis=0)
 train_x = train_x + test_x[: options.curr]
 train_y = np.concatenate([train_y, test_y[: options.curr]], axis=0)
+train_mean = np.concatenate([train_mean, test_mean[: options.curr]], axis=0)
+train_std = np.concatenate([train_std, test_std[: options.curr]], axis=0)
 
 
-def create_tensors(metas, seqs, ys):
+def create_tensors(metas, seqs, ys, means, stds):
     metas = float_tensor(metas)
     ys = float_tensor(ys)
+    means, stds = float_tensor(means), float_tensor(stds)
     max_len = max([len(s) for s in seqs])
     out_seqs = np.zeros((len(seqs), max_len, seqs[0].shape[-1]), dtype="float32")
     lens = np.zeros(len(seqs), dtype="int32")
@@ -211,7 +244,7 @@ def create_tensors(metas, seqs, ys):
         out_seqs[i, : len(s), :] = s
         lens[i] = len(s)
     out_seqs = float_tensor(out_seqs)
-    return metas, out_seqs, ys, lens
+    return metas, out_seqs, ys, lens, means, stds
 
 
 def create_mask1(lens, out_dim=1):
@@ -299,11 +332,13 @@ optimizer = optim.Adam(
 
 # emb_model_full = emb_model
 
-train_meta_, train_x_, train_y_, train_lens_ = create_tensors(
-    train_meta, train_x, train_y
+train_meta_, train_x_, train_y_, train_lens_, train_mean_, train_std_ = create_tensors(
+    train_meta, train_x, train_y, train_mean, train_std
 )
 
-test_meta, test_x, test_y, test_lens = create_tensors(test_meta, test_x, test_y)
+test_meta, test_x, test_y, test_lens, test_mean, test_std = create_tensors(
+    test_meta, test_x, test_y, test_mean, test_std
+)
 
 full_x_chunks = np.zeros((full_x.shape[0] * 4, full_x.shape[1], full_x.shape[2]))
 full_meta_chunks = np.zeros((full_meta.shape[0] * 4, full_meta.shape[1]))
@@ -327,19 +362,23 @@ perm = np.random.permutation(train_meta_.shape[0])
 val_perm = perm[: train_meta_.shape[0] // val_frac]
 train_perm = perm[train_meta_.shape[0] // val_frac :]
 
-train_meta, train_x, train_y, train_lens, train_mask = (
+train_meta, train_x, train_y, train_lens, train_mask, train_mean, train_std = (
     train_meta_[train_perm],
     train_x_[train_perm],
     train_y_[train_perm],
     train_lens_[train_perm],
     train_mask_[:, train_perm, :],
+    train_mean_[train_perm],
+    train_std_[train_perm],
 )
-val_meta, val_x, val_y, val_lens, val_mask = (
+val_meta, val_x, val_y, val_lens, val_mask, val_mean, val_std = (
     train_meta_[val_perm],
     train_x_[val_perm],
     train_y_[val_perm],
     train_lens_[val_perm],
     train_mask_[:, val_perm, :],
+    train_mean_[val_perm],
+    train_std_[val_perm],
 )
 
 
@@ -380,8 +419,16 @@ def evaluate(sample=True, dtype="test"):
         y_pred, _, vars, _, _, _, _ = fnp_model.predict(
             x_embeds, full_embeds, full_y, sample=sample
         )
-    labels_dict = {"val": val_y, "test": test_y, "train": train_y, "all": train_y_}
-    labels = labels_dict[dtype].squeeze(2)
+    labels_dict = {
+        "val": (val_y, val_mean, val_std),
+        "test": (test_y, test_mean, test_std),
+        "train": (train_y, train_mean, train_std),
+        "all": (train_y_, train_mean_, train_std_),
+    }
+    labels = (labels_dict[dtype][0].squeeze(2) * labels_dict[dtype][2]) + labels_dict[
+        dtype
+    ][1]
+    y_pred = (y_pred * labels_dict[dtype][2]) + labels_dict[dtype][1]
     mse_error = torch.pow(y_pred - labels, 2).mean().sqrt().detach().cpu().numpy()
     return (
         mse_error,

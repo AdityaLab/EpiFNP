@@ -12,6 +12,7 @@ from models.fnpmodels import (
     RegressionFNP3,
     EmbedTransSeq,
 )
+from models.revin import RevIN
 from transforms import scale_to_max, shift_start
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -43,6 +44,7 @@ parser.add_option("-e", "--epoch", dest="epochs", type="int", default=5500)
 parser.add_option("--shift_vert", action="store_true", dest="shift_vert", default=False)
 parser.add_option("--shift_hor", action="store_true", dest="shift_hor", default=False)
 parser.add_option("--weight", dest="weight", type="int", default=1)
+parser.add_option("--use_revin", action="store_true", dest="use_revin", default=False)
 parser.add_option(
     "--lookback", dest="lookback", type="int", default=0
 )  # 0 means full seq
@@ -60,7 +62,7 @@ regions = [options.region]
 week_ahead = options.week_ahead
 val_frac = 5
 attn = options.atten
-model_num = f"MultiShiftInstanceAR22_{options.region}_{options.weight}_{options.lookback}_{options.shift_vert}_{options.shift_hor}_{options.curr}"
+model_num = f"MultiShiftRevINAR22_{options.region}_{options.weight}_{options.lookback}_{options.shift_vert}_{options.shift_hor}_{options.use_revin}_{options.curr}"
 # model_num = 22
 EPOCHS = options.epochs
 
@@ -345,6 +347,10 @@ optimizer = optim.Adam(
     + list(emb_model_full.parameters()),
     lr=1e-3,
 )
+if options.use_revin:
+    revin = RevIN(1, eps=1e-6).cuda()
+else:
+    revin = None
 
 # schduler = optim.lr_scheduler.MultiStepLR(optimizer, [10, 500, 3000])
 
@@ -401,12 +407,16 @@ val_meta, val_x, val_y, val_lens, val_mask, val_mean, val_std = (
 
 
 def save_model(file_prefix: str):
+    if options.use_revin:
+        torch.save(revin.state_dict(), file_prefix + "_revin_model.pth")
     torch.save(emb_model.state_dict(), file_prefix + "_emb_model.pth")
     torch.save(emb_model_full.state_dict(), file_prefix + "_emb_model_full.pth")
     torch.save(fnp_model.state_dict(), file_prefix + "_fnp_model.pth")
 
 
 def load_model(file_prefix: str):
+    if options.use_revin:
+        revin.load_state_dict(torch.load(file_prefix + "_revin_model.pth"))
     emb_model.load_state_dict(torch.load(file_prefix + "_emb_model.pth"))
     emb_model_full.load_state_dict(torch.load(file_prefix + "_emb_model_full.pth"))
     fnp_model.load_state_dict(torch.load(file_prefix + "_fnp_model.pth"))
@@ -419,23 +429,45 @@ def evaluate(sample=True, dtype="test"):
         fnp_model.eval()
         full_embeds = emb_model_full(full_x.transpose(1, 0), full_meta)
         if dtype == "val":
-            x_embeds = emb_model.forward_mask(val_x.transpose(1, 0), val_meta, val_mask)
-        elif dtype == "test":
+            if options.use_revin:
+                val_x_in = revin(val_x, "norm")
+            else:
+                val_x_in = val_x
             x_embeds = emb_model.forward_mask(
-                test_x.transpose(1, 0), test_meta, test_mask
+                val_x_in.transpose(1, 0), val_meta, val_mask
+            )
+        elif dtype == "test":
+            if options.use_revin:
+                test_x_in = revin(test_x, "norm")
+            else:
+                test_x_in = test_x
+            x_embeds = emb_model.forward_mask(
+                test_x_in.transpose(1, 0), test_meta, test_mask
             )
         elif dtype == "train":
+            if options.use_revin:
+                train_x_in = revin(train_x, "norm")
+            else:
+                train_x_in = train_x
             x_embeds = emb_model.forward_mask(
-                train_x.transpose(1, 0), train_meta, train_mask
+                train_x_in.transpose(1, 0), train_meta, train_mask
             )
         elif dtype == "all":
+            if options.use_revin:
+                train_x__in = revin(train_x_, "norm")
+            else:
+                train_x__in = train_x_
             x_embeds = emb_model.forward_mask(
-                train_x_.transpose(1, 0), train_meta_, train_mask_
+                train_x__in.transpose(1, 0), train_meta_, train_mask_
             )
         else:
             raise ValueError("Incorrect dtype")
         y_pred, _, vars, _, _, _, _ = fnp_model.predict(
-            x_embeds, full_embeds, full_y, sample=sample
+            x_embeds,
+            full_embeds,
+            full_y,
+            sample=sample,
+            revin_module=revin if options.use_revin else None,
         )
     labels_dict = {
         "val": (val_y, val_mean, val_std),
@@ -471,9 +503,21 @@ for ep in range(EPOCHS):
     fnp_model.train()
     logger.info(f"Epoch: {ep+1}")
     optimizer.zero_grad()
-    x_embeds = emb_model.forward_mask(train_x.transpose(1, 0), train_meta, train_mask)
+    if options.use_revin:
+        train_x_in = revin(train_x, "norm")
+    else:
+        train_x_in = train_x
+    x_embeds = emb_model.forward_mask(
+        train_x_in.transpose(1, 0), train_meta, train_mask
+    )
     full_embeds = emb_model_full(full_x.transpose(1, 0), full_meta)
-    loss, yp, _ = fnp_model.forward(full_embeds, full_y, x_embeds, train_y)
+    loss, yp, _ = fnp_model.forward(
+        full_embeds,
+        full_y,
+        x_embeds,
+        train_y,
+        revin_module=revin if options.use_revin else None,
+    )
     loss.backward()
     optimizer.step()
     # schduler.step()
@@ -548,7 +592,7 @@ for i in range(week_ahead):
     plt.plot(yt[:, i], label="True Value", color="green")
     plt.legend()
     plt.title(f"RMSE: {e}")
-    plt.savefig(f"plots/Test{model_num}_{i+1}.png")
+    plt.savefig(f"plots/Multi/Test{model_num}_{i+1}.png")
 dt = {
     "rmse": e,
     "target": yt,

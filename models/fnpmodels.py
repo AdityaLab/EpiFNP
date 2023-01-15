@@ -1176,7 +1176,7 @@ class RegressionFNP3(nn.Module):
         if self.add_atten:
             self.atten_layer = LatentAtten(self.dim_h)
 
-    def forward(self, XR, yR, XM, yM, kl_anneal=1.0, diversity_wt=0):
+    def forward(self, XR, yR, XM, yM, kl_anneal=1.0, diversity_wt=0, revin_module=None):
         # sR = self.atten_ref(XR).mean(dim=0)
         sR = XR.mean(dim=0)
         X_all = torch.cat([XR, XM], dim=0)
@@ -1270,6 +1270,10 @@ class RegressionFNP3(nn.Module):
         mean_yM = mean_y[XR.size(0) :]
         logstd_yM = logstd_y[XR.size(0) :]
 
+        if revin_module is not None:
+            mean_yM = revin_module(mean_yM, "denorm")
+            logstd_yM = torch.log(revin_module(torch.exp(logstd_yM), "denorm"))
+
         # logp(M|S)
         pyM = Normal(mean_yM, logstd_yM)
         log_pyM = torch.sum(pyM.log_prob(yM.squeeze(2)))
@@ -1284,7 +1288,7 @@ class RegressionFNP3(nn.Module):
 
         return loss, mean_y, logstd_y
 
-    def predict(self, x_new, XR, yR, sample=True):
+    def predict(self, x_new, XR, yR, sample=True, revin_module=None):
         # sR = self.atten_ref(XR).mean(dim=0)
         sR = XR.mean(dim=0)
         H_all = self.cond_trans(torch.cat([XR, x_new], 0))
@@ -1327,6 +1331,9 @@ class RegressionFNP3(nn.Module):
         final_out = self.output(final_rep)
         mean_y, logstd_y = final_out[:, :, 0], final_out[:, :, 1]
         logstd_y = torch.log(0.1 + 0.9 * F.softplus(logstd_y))
+        if revin_module is not None:
+            mean_y = revin_module(mean_y, "denorm")
+            logstd_y = torch.log(revin_module(torch.exp(logstd_y), "denorm"))
 
         init_y = Normal(mean_y, logstd_y)
         if sample:

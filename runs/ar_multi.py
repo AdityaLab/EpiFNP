@@ -4,8 +4,8 @@ import itertools
 
 states = ["X"]
 for curr in range(11):
-    for shift_hor, shift_vert, weight, lookback in itertools.product(
-        [False], [False], [1, 2, 5], [0, 10, 20]
+    for shift_hor, shift_vert, weight, lookback, revin in itertools.product(
+        [False], [False], [1, 2, 5], [0, 10, 20], [True, False]
     ):
         for region in states:
             print(f"Training {region}...")
@@ -24,6 +24,7 @@ for curr in range(11):
                 region,
                 "-c",
                 str(curr),
+                "--use_revin" if revin else "",
             ]
             print("Running: ", " ".join(command))
             subprocess.run(command)
